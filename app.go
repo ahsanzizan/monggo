@@ -40,89 +40,82 @@ func initMongoDB() {
 	collection = client.Database("monggo").Collection("users")
 }
 
-func getUsers(w http.ResponseWriter, r *http.Request) {
+func handleUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	cur, err := collection.Find(context.Background(), bson.D{})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer cur.Close(context.Background())
+	switch r.Method {
+	case "GET":
+		id := r.URL.Query().Get("id")
+		if id != "" {
+			idInt := 0
+			fmt.Sscanf(id, "%d", &idInt)
 
-	var users []User
-	for cur.Next(context.Background()) {
-		var user User
-		err := cur.Decode(&user)
+			var user User
+			err := collection.FindOne(context.Background(), bson.M{"id": idInt}).Decode(&user)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+
+			json.NewEncoder(w).Encode(user)
+		} else {
+			cur, err := collection.Find(context.Background(), bson.D{})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer cur.Close(context.Background())
+
+			var users []User
+			for cur.Next(context.Background()) {
+				var user User
+				err := cur.Decode(&user)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				users = append(users, user)
+			}
+
+			if err := cur.Err(); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			json.NewEncoder(w).Encode(users)
+		}
+	case "POST":
+		w.Header().Set("Content-Type", "application/json")
+
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		users = append(users, user)
+
+		var newUser User
+		err = json.Unmarshal(body, &newUser)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		newUser.ID = primitive.NewObjectID().Hex()
+
+		_, err = collection.InsertOne(context.Background(), newUser)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(newUser)
 	}
-
-	if err := cur.Err(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	json.NewEncoder(w).Encode(users)
-}
-
-func getUser(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	id := r.URL.Query().Get("id")
-
-	idInt := 0
-	fmt.Sscanf(id, "%d", &idInt)
-
-	var user User
-	err := collection.FindOne(context.Background(), bson.M{"id": idInt}).Decode(&user)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	json.NewEncoder(w).Encode(user)
-}
-
-func createUser(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	// Read the request body
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Parse the JSON body into a User struct
-	var newUser User
-	err = json.Unmarshal(body, &newUser)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	newUser.ID = primitive.NewObjectID().Hex()
-
-	// Insert the new user into MongoDB
-	_, err = collection.InsertOne(context.Background(), newUser)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Return the created user
-	json.NewEncoder(w).Encode(newUser)
 }
 
 func main() {
 	initMongoDB()
 
-	http.HandleFunc("/users", getUsers)
-	http.HandleFunc("/user", getUser)
+	http.HandleFunc("/users", handleUsers)
 
 	fmt.Println("Server is running on :8080...")
 	http.ListenAndServe(":8080", nil)
