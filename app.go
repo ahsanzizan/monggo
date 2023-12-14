@@ -4,22 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// User struct remains the same
 type User struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Age  int    `json:"age"`
 }
 
-var client *mongo.Client
 var collection *mongo.Collection
 
 func initMongoDB() {
@@ -85,6 +85,37 @@ func getUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(user)
+}
+
+func createUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Read the request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Parse the JSON body into a User struct
+	var newUser User
+	err = json.Unmarshal(body, &newUser)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	newUser.ID = primitive.NewObjectID().Hex()
+
+	// Insert the new user into MongoDB
+	_, err = collection.InsertOne(context.Background(), newUser)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return the created user
+	json.NewEncoder(w).Encode(newUser)
 }
 
 func main() {
